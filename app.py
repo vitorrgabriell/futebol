@@ -1,9 +1,11 @@
 from flask import Flask, jsonify, request
 from config import create_app, get_db_connection
 from collections import OrderedDict
+from flask_cors import CORS
 import datetime
 
 app = Flask(__name__)
+CORS(app)
 
 @app.route('/get_clubes', methods=['GET'])
 def get_clubes():
@@ -19,7 +21,7 @@ def get_clubes():
             'clube_id': clube['clube_id'],
             'nome': clube['nome'],
             'localidade': clube['localidade'],
-            'data_fundacao': clube['data_fundacao'].strftime('%Y-%m-%d')
+            'data_fundacao': clube['data_fundacao'].strftime('%Y-%m-%d') if clube['data_fundacao'] else None
         }))
 
     cursor.close()
@@ -332,6 +334,348 @@ def add_campeonato():
     conn.close()
 
     return jsonify({"message": "Campeonato adicionado com sucesso!"}), 201
+
+@app.route('/att_clubes/<int:clube_id>', methods=['PUT'])
+def update_clube(clube_id):
+    data = request.get_json()
+
+    nome = data.get('nome')
+    localidade = data.get('localidade')
+    data_fundacao = data.get('data_fundacao')
+
+    if not nome or not localidade or not data_fundacao:
+        return jsonify({"Error": "Nome, localidade e data de fundação são obrigatórios para atualizar o clube"}), 400
+
+    data_fundacao_formatada = validar_data(data_fundacao)
+    if not data_fundacao_formatada:
+        return jsonify({"Error": "Data de fundação deve estar no formato DD-MM-YYYY"}), 400
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('SELECT * FROM clube WHERE clube_id = %s', (clube_id,))
+    clube = cursor.fetchone()
+    if not clube:
+        cursor.close()
+        conn.close()
+        return jsonify({"Error": "Clube não encontrado"}), 404
+
+    query = '''
+    UPDATE clube 
+    SET nome = %s, localidade = %s, data_fundacao = %s 
+    WHERE clube_id = %s
+    '''
+    cursor.execute(query, (nome, localidade, data_fundacao_formatada, clube_id))
+    conn.commit()
+
+    cursor.close()
+    conn.close()
+
+    return jsonify({"message": "Clube atualizado com sucesso!"}), 200
+
+@app.route('/att_jogadores/<int:jogador_id>', methods=['PUT'])
+def update_jogador(jogador_id):
+    data = request.get_json()
+
+    nome = data.get('nome')
+    data_nascimento = data.get('data_nascimento')
+    posicao = data.get('posicao')
+    altura = data.get('altura')
+    peso = data.get('peso')
+    cidade_natal = data.get('cidade_natal')
+
+    if not nome or not data_nascimento or not posicao or not altura or not peso or not cidade_natal:
+        return jsonify({"Error": "Todos os campos são obrigatórios para atualizar o jogador"}), 400
+
+    data_nascimento_formatada = validar_data(data_nascimento)
+    if not data_nascimento_formatada:
+        return jsonify({"Error": "Data de nascimento deve estar no formato DD-MM-YYYY"}), 400
+
+    try:
+        altura = float(altura)
+        peso = float(peso)
+    except ValueError:
+        return jsonify({"Error": "Altura e peso devem ser números válidos"}), 400
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('SELECT * FROM jogador WHERE jogador_id = %s', (jogador_id,))
+    jogador = cursor.fetchone()
+    if not jogador:
+        cursor.close()
+        conn.close()
+        return jsonify({"Error": "Jogador não encontrado"}), 404
+
+    query = '''
+    UPDATE jogador 
+    SET nome = %s, data_nascimento = %s, posicao = %s, altura = %s, peso = %s, cidade_natal = %s
+    WHERE jogador_id = %s
+    '''
+    cursor.execute(query, (nome, data_nascimento_formatada, posicao, altura, peso, cidade_natal, jogador_id))
+    conn.commit()
+
+    cursor.close()
+    conn.close()
+
+    return jsonify({"message": "Jogador atualizado com sucesso!"}), 200
+
+@app.route('/att_estatisticas/<int:estatistica_id>', methods=['PUT'])
+def update_estatistica(estatistica_id):
+    data = request.get_json()
+
+    jogo_id = data.get('jogo_id')
+    jogador_id = data.get('jogador_id')
+    tipo = data.get('tipo') 
+    valor = data.get('valor')
+    minuto = data.get('minuto')
+
+    if not jogo_id or not tipo or not valor or not minuto:
+        return jsonify({"Error": "Jogo, tipo, valor e minuto são obrigatórios para atualizar a estatística"}), 400
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('SELECT * FROM jogo WHERE jogo_id = %s', (jogo_id,))
+    jogo = cursor.fetchone()
+    if not jogo:
+        cursor.close()
+        conn.close()
+        return jsonify({"Error": "Jogo não encontrado"}), 404
+
+    if jogador_id:
+        cursor.execute('SELECT * FROM jogador WHERE jogador_id = %s', (jogador_id,))
+        jogador = cursor.fetchone()
+        if not jogador:
+            cursor.close()
+            conn.close()
+            return jsonify({"Error": "Jogador não encontrado"}), 404
+
+    cursor.execute('SELECT * FROM estatistica_jogo WHERE estatistica_id = %s', (estatistica_id,))
+    estatistica = cursor.fetchone()
+    if not estatistica:
+        cursor.close()
+        conn.close()
+        return jsonify({"Error": "Estatística não encontrada"}), 404
+
+    query = '''
+    UPDATE estatistica_jogo
+    SET jogo_id = %s, jogador_id = %s, tipo = %s, valor = %s, minuto = %s
+    WHERE estatistica_id = %s
+    '''
+    cursor.execute(query, (jogo_id, jogador_id, tipo, valor, minuto, estatistica_id))
+    conn.commit()
+
+    cursor.close()
+    conn.close()
+
+    return jsonify({"message": "Estatística atualizada com sucesso!"}), 200
+
+@app.route('/att_jogos/<int:jogo_id>', methods=['PUT'])
+def update_jogo(jogo_id):
+    data = request.get_json()
+
+    campeonato_id = data.get('campeonato_id')
+    clube_casa_id = data.get('clube_casa_id')
+    clube_visitante_id = data.get('clube_visitante_id')
+    data_jogo = data.get('data_jogo')
+    local = data.get('local')
+
+    if not campeonato_id or not clube_casa_id or not clube_visitante_id or not data_jogo or not local:
+        return jsonify({"Error": "Todos os campos são obrigatórios para atualizar o jogo"}), 400
+
+    data_jogo_formatada = validar_data(data_jogo)
+    if not data_jogo_formatada:
+        return jsonify({"Error": "A data do jogo deve estar no formato DD-MM-YYYY"}), 400
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('SELECT * FROM campeonato WHERE campeonato_id = %s', (campeonato_id,))
+    campeonato = cursor.fetchone()
+    if not campeonato:
+        cursor.close()
+        conn.close()
+        return jsonify({"Error": "Campeonato não encontrado"}), 404
+
+    cursor.execute('SELECT * FROM clube WHERE clube_id = %s', (clube_casa_id,))
+    clube_casa = cursor.fetchone()
+    if not clube_casa:
+        cursor.close()
+        conn.close()
+        return jsonify({"Error": "Clube mandante não encontrado"}), 404
+
+    cursor.execute('SELECT * FROM clube WHERE clube_id = %s', (clube_visitante_id,))
+    clube_visitante = cursor.fetchone()
+    if not clube_visitante:
+        cursor.close()
+        conn.close()
+        return jsonify({"Error": "Clube visitante não encontrado"}), 404
+
+    cursor.execute('SELECT * FROM jogo WHERE jogo_id = %s', (jogo_id,))
+    jogo = cursor.fetchone()
+    if not jogo:
+        cursor.close()
+        conn.close()
+        return jsonify({"Error": "Jogo não encontrado"}), 404
+
+    query = '''
+    UPDATE jogo 
+    SET campeonato_id = %s, clube_casa_id = %s, clube_visitante_id = %s, data = %s, local = %s 
+    WHERE jogo_id = %s
+    '''
+    cursor.execute(query, (campeonato_id, clube_casa_id, clube_visitante_id, data_jogo_formatada, local, jogo_id))
+    conn.commit()
+
+    cursor.close()
+    conn.close()
+
+    return jsonify({"message": "Jogo atualizado com sucesso!"}), 200
+
+@app.route('/att_campeonatos/<int:campeonato_id>', methods=['PUT'])
+def update_campeonato(campeonato_id):
+    data = request.get_json()
+
+    nome = data.get('nome')
+    ano = data.get('ano')
+    tipo = data.get('tipo')
+
+    if not nome or not ano or not tipo:
+        return jsonify({"Error": "Nome, ano e tipo do campeonato são obrigatórios para atualização"}), 400
+
+    try:
+        ano = int(ano)
+        if ano < 1800 or ano > datetime.datetime.now().year + 1:
+            return jsonify({"Error": "Ano deve ser um número válido e plausível"}), 400
+    except ValueError:
+        return jsonify({"Error": "Ano deve ser um número válido"}), 400
+
+    tipos_validos = ['regional', 'nacional', 'internacional']
+    if tipo.lower() not in tipos_validos:
+        return jsonify({"Error": "Tipo de campeonato inválido. Valores permitidos: regional, nacional, internacional"}), 400
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('SELECT * FROM campeonato WHERE campeonato_id = %s', (campeonato_id,))
+    campeonato = cursor.fetchone()
+    if not campeonato:
+        cursor.close()
+        conn.close()
+        return jsonify({"Error": "Campeonato não encontrado"}), 404
+
+    query = '''
+    UPDATE campeonato 
+    SET nome = %s, ano = %s, tipo = %s 
+    WHERE campeonato_id = %s
+    '''
+    cursor.execute(query, (nome, ano, tipo, campeonato_id))
+    conn.commit()
+
+    cursor.close()
+    conn.close()
+
+    return jsonify({"message": "Campeonato atualizado com sucesso!"}), 200
+
+@app.route('/delete_clubes/<int:clube_id>', methods=['DELETE'])
+def delete_clube(clube_id):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute('SELECT * FROM clube WHERE clube_id = %s', (clube_id,))
+    clube = cursor.fetchone()
+    if not clube:
+        cursor.close()
+        conn.close()
+        return jsonify({"Error": "Clube não encontrado"}), 404
+
+    query = 'DELETE FROM clube WHERE clube_id = %s'
+    cursor.execute(query, (clube_id,))
+    conn.commit()
+
+    cursor.close()
+    conn.close()
+
+    return jsonify({"message": "Clube excluído com sucesso!"}), 200
+
+@app.route('/delete_jogadores/<int:jogador_id>', methods=['DELETE'])
+def delete_jogador(jogador_id):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute('SELECT * FROM jogador WHERE jogador_id = %s', (jogador_id,))
+    jogador = cursor.fetchone()
+    if not jogador:
+        cursor.close()
+        conn.close()
+        return jsonify({"Error": "Jogador não encontrado"}), 404
+
+    query = 'DELETE FROM jogador WHERE jogador_id = %s'
+    cursor.execute(query, (jogador_id,))
+    conn.commit()
+
+    cursor.close()
+    conn.close()
+
+    return jsonify({"message": "Jogador excluído com sucesso!"}), 200
+
+@app.route('/delete_estatisticas/<int:estatistica_id>', methods=['DELETE'])
+def delete_estatistica(estatistica_id):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute('SELECT * FROM estatistica_jogo WHERE estatistica_id = %s', (estatistica_id,))
+    estatistica = cursor.fetchone()
+    if not estatistica:
+        cursor.close()
+        conn.close()
+        return jsonify({"Error": "Estatística não encontrada"}), 404
+
+    query = 'DELETE FROM estatistica_jogo WHERE estatistica_id = %s'
+    cursor.execute(query, (estatistica_id,))
+    conn.commit()
+
+    cursor.close()
+    conn.close()
+
+    return jsonify({"message": "Estatística excluída com sucesso!"}), 200
+
+@app.route('/delete_jogos/<int:jogo_id>', methods=['DELETE'])
+def delete_jogo(jogo_id):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute('SELECT * FROM jogo WHERE jogo_id = %s', (jogo_id,))
+    jogo = cursor.fetchone()
+    if not jogo:
+        cursor.close()
+        conn.close()
+        return jsonify({"Error": "Jogo não encontrado"}), 404
+
+    query = 'DELETE FROM jogo WHERE jogo_id = %s'
+    cursor.execute(query, (jogo_id,))
+    conn.commit()
+
+    cursor.close()
+    conn.close()
+
+    return jsonify({"message": "Jogo excluído com sucesso!"}), 200
+
+@app.route('/delete_campeonatos/<int:campeonato_id>', methods=['DELETE'])
+def delete_campeonato(campeonato_id):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute('SELECT * FROM campeonato WHERE campeonato_id = %s', (campeonato_id,))
+    campeonato = cursor.fetchone()
+    if not campeonato:
+        cursor.close()
+        conn.close()
+        return jsonify({"Error": "Campeonato não encontrado"}), 404
+
+    query = 'DELETE FROM campeonato WHERE campeonato_id = %s'
+    cursor.execute(query, (campeonato_id,))
+    conn.commit()
+
+    cursor.close()
+    conn.close()
+
+    return jsonify({"message": "Campeonato excluído com sucesso!"}), 200
 
 if __name__ == '__main__':
     app.run(debug=True)
